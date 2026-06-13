@@ -1,6 +1,6 @@
 # Discord Screenshot Hall of Fame Bot
 
-This bot watches one screenshot channel. When someone posts an image, the bot adds the configured voting reaction. When that post reaches the reaction threshold, it re-uploads the image to your `hall-of-fame` channel and records the promotion in SQLite so it will not be promoted twice.
+This bot watches one screenshot channel. When someone posts images, the bot adds numbered voting reactions (`1️⃣`, `2️⃣`, `3️⃣`, and so on). Each reaction maps to one screenshot in that message. When a specific screenshot reaches the reaction threshold, the bot re-uploads only that screenshot to your `hall-of-fame` channel and records the promotion in SQLite so it will not be promoted twice.
 
 Logs are emitted as structured JSON with event names and context fields, which makes them easy to search in systemd, Docker, or a hosted log service.
 
@@ -20,7 +20,6 @@ It also deletes non-bot messages posted in the hall-of-fame channel. You should 
    - `SCREENSHOT_CHANNEL_ID`: the channel where screenshots are posted.
    - `HALL_OF_FAME_CHANNEL_ID`: the channel where winning screenshots are reposted.
    - `UPVOTE_THRESHOLD`: defaults to `5`.
-   - `UPVOTE_EMOJI`: defaults to `⭐`.
    - `SCREENSHOT_DB_PATH`: defaults to `data/screenshots.sqlite`.
    - `LOG_LEVEL`: defaults to `info`. Supported values are `debug`, `info`, `warn`, and `error`.
 
@@ -50,4 +49,4 @@ For `hall-of-fame`, deny `Send Messages` for regular members and allow it only f
 
 ## Data
 
-The bot creates a SQLite database at `data/screenshots.sqlite` by default. This file tracks screenshot message IDs, source URLs, promotion state, hall-of-fame message IDs, and vote counts. The `data/` directory is ignored by git.
+The bot creates a SQLite database at `data/screenshots.sqlite` by default. This file tracks screenshot message IDs, attachment IDs, source URLs, promotion state, hall-of-fame message IDs, and vote counts. The `data/` directory is ignored by git.

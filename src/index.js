@@ -14,7 +14,6 @@ const config = {
   screenshotChannelId: mustGetEnv('SCREENSHOT_CHANNEL_ID'),
   hallOfFameChannelId: mustGetEnv('HALL_OF_FAME_CHANNEL_ID'),
   upvoteThreshold: Number.parseInt(process.env.UPVOTE_THRESHOLD ?? '5', 10),
-  upvoteEmoji: process.env.UPVOTE_EMOJI ?? '⭐',
   screenshotDbPath: process.env.SCREENSHOT_DB_PATH ?? 'data/screenshots.sqlite',
   logLevel: process.env.LOG_LEVEL ?? 'info',
 };
@@ -31,6 +30,9 @@ const imageContentTypes = new Set([
   'image/png',
   'image/webp',
 ]);
+
+const numberReactions = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+const activePromotions = new Set();
 
 const logger = createLogger(config.logLevel);
 const screenshotStore = await createScreenshotStore(config.screenshotDbPath);
@@ -53,7 +55,7 @@ client.once('clientReady', () => {
     screenshotChannelId: config.screenshotChannelId,
     hallOfFameChannelId: config.hallOfFameChannelId,
     upvoteThreshold: config.upvoteThreshold,
-    upvoteEmoji: config.upvoteEmoji,
+    reactionMode: 'numbered',
   });
 });
 
@@ -102,7 +104,9 @@ client.on('messageReactionAdd', async (reaction) => {
       return;
     }
 
-    if (!isConfiguredUpvote(reaction)) {
+    const attachmentIndex = getAttachmentIndexForReaction(reaction);
+
+    if (attachmentIndex === -1) {
       return;
     }
 
@@ -110,6 +114,7 @@ client.on('messageReactionAdd', async (reaction) => {
 
     logger.debug('screenshot_vote_counted', {
       messageId: message.id,
+      attachmentIndex,
       channelId: message.channelId,
       emoji: reaction.emoji.name,
       upvoteCount,
@@ -120,7 +125,7 @@ client.on('messageReactionAdd', async (reaction) => {
       return;
     }
 
-    await promoteMessage(message, upvoteCount);
+    await promoteScreenshot(message, attachmentIndex, upvoteCount);
   } catch (error) {
     logger.error('reaction_handler_failed', { error });
   }
@@ -160,8 +165,8 @@ function mustGetEnv(name) {
   return value;
 }
 
-function isConfiguredUpvote(reaction) {
-  return reaction.emoji.id === config.upvoteEmoji || reaction.emoji.name === config.upvoteEmoji;
+function getAttachmentIndexForReaction(reaction) {
+  return numberReactions.findIndex((emoji) => reaction.emoji.name === emoji);
 }
 
 async function countMemberUpvotes(reaction) {
@@ -187,77 +192,115 @@ async function addUpvoteReaction(message) {
     return;
   }
 
-  try {
-    screenshotStore.track(message, imageAttachments.length);
-    await message.react(config.upvoteEmoji);
-    logger.info('screenshot_reaction_added', {
+  if (imageAttachments.length > numberReactions.length) {
+    logger.warn('screenshot_reactions_skipped_too_many_attachments', {
       messageId: message.id,
       channelId: message.channelId,
       guildId: message.guildId,
       authorId: message.author.id,
       attachmentCount: imageAttachments.length,
-      emoji: config.upvoteEmoji,
+      supportedAttachmentCount: numberReactions.length,
+    });
+    return;
+  }
+
+  try {
+    screenshotStore.track(message, imageAttachments);
+
+    for (const reactionEmoji of numberReactions.slice(0, imageAttachments.length)) {
+      await message.react(reactionEmoji);
+    }
+
+    logger.info('screenshot_reactions_added', {
+      messageId: message.id,
+      channelId: message.channelId,
+      guildId: message.guildId,
+      authorId: message.author.id,
+      attachmentCount: imageAttachments.length,
+      emojis: numberReactions.slice(0, imageAttachments.length),
     });
   } catch (error) {
-    logger.error('screenshot_reaction_add_failed', {
+    logger.error('screenshot_reactions_add_failed', {
       error,
       messageId: message.id,
       channelId: message.channelId,
       guildId: message.guildId,
       authorId: message.author.id,
-      emoji: config.upvoteEmoji,
     });
   }
 }
 
-async function promoteMessage(message, upvoteCount) {
-  if (screenshotStore.isPromoted(message.id)) {
-    logger.debug('screenshot_already_promoted', {
-      messageId: message.id,
-      upvoteCount,
-    });
-    return;
-  }
-
+async function promoteScreenshot(message, attachmentIndex, upvoteCount) {
   const imageAttachments = getImageAttachments(message);
+  const attachment = imageAttachments[attachmentIndex];
 
-  if (imageAttachments.length === 0) {
-    logger.warn('screenshot_promotion_skipped_no_images', {
+  if (!attachment) {
+    logger.warn('screenshot_promotion_skipped_missing_attachment', {
       messageId: message.id,
       channelId: message.channelId,
+      attachmentIndex,
       upvoteCount,
     });
     return;
   }
 
-  screenshotStore.track(message, imageAttachments.length);
+  const promotionKey = `${message.id}:${attachment.id}`;
 
-  const hallOfFameChannel = await client.channels.fetch(config.hallOfFameChannelId);
-
-  if (!hallOfFameChannel?.isTextBased()) {
-    throw new Error('HALL_OF_FAME_CHANNEL_ID must point to a text-based channel.');
+  if (activePromotions.has(promotionKey)) {
+    logger.debug('screenshot_already_promoted', {
+      messageId: message.id,
+      attachmentId: attachment.id,
+      attachmentIndex,
+      upvoteCount,
+    });
+    return;
   }
 
-  const files = await Promise.all(imageAttachments.map(downloadAttachment));
-  const authorName = message.member?.displayName ?? message.author.username;
+  if (screenshotStore.isPromoted(message.id, attachment.id)) {
+    logger.debug('screenshot_already_promoted', {
+      messageId: message.id,
+      attachmentId: attachment.id,
+      attachmentIndex,
+      upvoteCount,
+    });
+    return;
+  }
 
-  const hallOfFameMessage = await hallOfFameChannel.send({
-    content: `Hall of Fame screenshot from ${authorName}\nOriginal: ${message.url}`,
-    files,
-    allowedMentions: { parse: [] },
-  });
+  activePromotions.add(promotionKey);
 
-  screenshotStore.markPromoted(message, hallOfFameMessage.id, upvoteCount);
-  logger.info('screenshot_promoted', {
-    messageId: message.id,
-    hallOfFameMessageId: hallOfFameMessage.id,
-    channelId: message.channelId,
-    hallOfFameChannelId: hallOfFameMessage.channelId,
-    guildId: message.guildId,
-    authorId: message.author.id,
-    attachmentCount: imageAttachments.length,
-    upvoteCount,
-  });
+  try {
+    screenshotStore.track(message, imageAttachments);
+
+    const hallOfFameChannel = await client.channels.fetch(config.hallOfFameChannelId);
+
+    if (!hallOfFameChannel?.isTextBased()) {
+      throw new Error('HALL_OF_FAME_CHANNEL_ID must point to a text-based channel.');
+    }
+
+    const file = await downloadAttachment(attachment);
+    const authorName = message.member?.displayName ?? message.author.username;
+
+    const hallOfFameMessage = await hallOfFameChannel.send({
+      content: `Hall of Fame screenshot #${attachmentIndex + 1} from ${authorName}\nOriginal: ${message.url}`,
+      files: [file],
+      allowedMentions: { parse: [] },
+    });
+
+    screenshotStore.markPromoted(message.id, attachment.id, hallOfFameMessage.id, upvoteCount);
+    logger.info('screenshot_promoted', {
+      messageId: message.id,
+      attachmentId: attachment.id,
+      attachmentIndex,
+      hallOfFameMessageId: hallOfFameMessage.id,
+      channelId: message.channelId,
+      hallOfFameChannelId: hallOfFameMessage.channelId,
+      guildId: message.guildId,
+      authorId: message.author.id,
+      upvoteCount,
+    });
+  } finally {
+    activePromotions.delete(promotionKey);
+  }
 }
 
 async function downloadAttachment(attachment) {
@@ -297,10 +340,33 @@ async function createScreenshotStore(dbPath) {
 
     CREATE INDEX IF NOT EXISTS idx_screenshots_promoted_at
       ON screenshots(promoted_at);
+
+    CREATE TABLE IF NOT EXISTS screenshot_attachments (
+      message_id TEXT NOT NULL,
+      attachment_id TEXT NOT NULL,
+      attachment_index INTEGER NOT NULL,
+      guild_id TEXT,
+      screenshot_channel_id TEXT NOT NULL,
+      author_id TEXT NOT NULL,
+      original_url TEXT NOT NULL,
+      attachment_url TEXT NOT NULL,
+      filename TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      promoted_at TEXT,
+      hall_of_fame_message_id TEXT,
+      upvote_count INTEGER,
+      PRIMARY KEY (message_id, attachment_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_screenshot_attachments_promoted_at
+      ON screenshot_attachments(promoted_at);
+
+    CREATE INDEX IF NOT EXISTS idx_screenshot_attachments_message_index
+      ON screenshot_attachments(message_id, attachment_index);
   `);
 
   const statements = {
-    track: db.prepare(`
+    trackMessage: db.prepare(`
       INSERT INTO screenshots (
         message_id,
         guild_id,
@@ -312,40 +378,73 @@ async function createScreenshotStore(dbPath) {
       ON CONFLICT(message_id) DO UPDATE SET
         attachment_count = excluded.attachment_count
     `),
+    trackAttachment: db.prepare(`
+      INSERT INTO screenshot_attachments (
+        message_id,
+        attachment_id,
+        attachment_index,
+        guild_id,
+        screenshot_channel_id,
+        author_id,
+        original_url,
+        attachment_url,
+        filename
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(message_id, attachment_id) DO UPDATE SET
+        attachment_index = excluded.attachment_index,
+        attachment_url = excluded.attachment_url,
+        filename = excluded.filename
+    `),
     isPromoted: db.prepare(`
       SELECT 1
-      FROM screenshots
+      FROM screenshot_attachments
       WHERE message_id = ?
+        AND attachment_id = ?
         AND promoted_at IS NOT NULL
       LIMIT 1
     `),
     markPromoted: db.prepare(`
-      UPDATE screenshots
+      UPDATE screenshot_attachments
       SET promoted_at = CURRENT_TIMESTAMP,
           hall_of_fame_message_id = ?,
           upvote_count = ?
       WHERE message_id = ?
+        AND attachment_id = ?
     `),
   };
 
   logger.info('screenshot_store_ready', { dbPath });
 
   return {
-    track(message, attachmentCount) {
-      statements.track.run(
+    track(message, attachments) {
+      statements.trackMessage.run(
         message.id,
         message.guildId,
         message.channelId,
         message.author.id,
         message.url,
-        attachmentCount,
+        attachments.length,
       );
+
+      attachments.forEach((attachment, attachmentIndex) => {
+        statements.trackAttachment.run(
+          message.id,
+          attachment.id,
+          attachmentIndex,
+          message.guildId,
+          message.channelId,
+          message.author.id,
+          message.url,
+          attachment.url,
+          attachment.name ?? null,
+        );
+      });
     },
-    isPromoted(messageId) {
-      return Boolean(statements.isPromoted.get(messageId));
+    isPromoted(messageId, attachmentId) {
+      return Boolean(statements.isPromoted.get(messageId, attachmentId));
     },
-    markPromoted(message, hallOfFameMessageId, upvoteCount) {
-      statements.markPromoted.run(hallOfFameMessageId, upvoteCount, message.id);
+    markPromoted(messageId, attachmentId, hallOfFameMessageId, upvoteCount) {
+      statements.markPromoted.run(hallOfFameMessageId, upvoteCount, messageId, attachmentId);
     },
     close() {
       db.close();
