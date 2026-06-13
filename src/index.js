@@ -376,7 +376,7 @@ async function sendReminderIfNeeded() {
     }
 
     const reminderMessage = await reminderChannel.send({
-      content: `@here ${reminder.pendingCount} screenshots are waiting for votes. React with the emoji under each screenshot post to help pick the next #hall-of-fame entries.`,
+      content: `@here ${reminder.pendingCount} screenshots are waiting for votes. React with the emoji under each screenshot post to help pick the next #hall-of-fame⭐ entries.`,
       allowedMentions: { parse: ['everyone'] },
     });
 
