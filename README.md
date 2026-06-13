@@ -1,6 +1,6 @@
 # Discord Screenshot Hall of Fame Bot
 
-This bot watches one screenshot channel. When someone posts images, the bot adds numbered voting reactions (`1️⃣`, `2️⃣`, `3️⃣`, and so on). Each reaction maps to one screenshot in that message. When a specific screenshot reaches the reaction threshold, the bot re-uploads only that screenshot to your `hall-of-fame` channel, tags the original sender, and records the promotion in SQLite so it will not be promoted twice.
+This bot watches one screenshot channel. When someone posts one image, the bot adds a `⭐` voting reaction. When someone posts multiple images, the bot adds numbered voting reactions (`1️⃣`, `2️⃣`, `3️⃣`, and so on). Each reaction maps to one screenshot in that message. When a specific screenshot reaches the reaction threshold, the bot re-uploads only that screenshot to your `hall-of-fame` channel, tags the original sender, and records the promotion in SQLite so it will not be promoted twice.
 
 If multiple screenshots are waiting for votes, the bot can send an `@here` reminder in the configured reminder channel. It sends at most one reminder per configured interval, and only when new unpromoted screenshots were posted since the last reminder.
 

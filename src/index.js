@@ -47,6 +47,7 @@ const imageContentTypes = new Set([
   'image/webp',
 ]);
 
+const singleScreenshotReaction = '⭐';
 const numberReactions = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 const activePromotions = new Set();
 
@@ -73,7 +74,7 @@ client.once('clientReady', () => {
     hallOfFameChannelId: config.hallOfFameChannelId,
     reminderChannelId: config.reminderChannelId,
     upvoteThreshold: config.upvoteThreshold,
-    reactionMode: 'numbered',
+    reactionMode: 'star_or_numbered',
     remindersEnabled: config.remindersEnabled,
     reminderIntervalHours: config.reminderIntervalHours,
   });
@@ -126,7 +127,8 @@ client.on('messageReactionAdd', async (reaction) => {
       return;
     }
 
-    const attachmentIndex = getAttachmentIndexForReaction(reaction);
+    const imageAttachments = getImageAttachments(message);
+    const attachmentIndex = getAttachmentIndexForReaction(reaction, imageAttachments.length);
 
     if (attachmentIndex === -1) {
       return;
@@ -147,7 +149,7 @@ client.on('messageReactionAdd', async (reaction) => {
       return;
     }
 
-    await promoteScreenshot(message, attachmentIndex, upvoteCount);
+    await promoteScreenshot(message, attachmentIndex, upvoteCount, imageAttachments);
   } catch (error) {
     logger.error('reaction_handler_failed', { error });
   }
@@ -191,8 +193,16 @@ function mustGetEnv(name) {
   return value;
 }
 
-function getAttachmentIndexForReaction(reaction) {
-  return numberReactions.findIndex((emoji) => reaction.emoji.name === emoji);
+function getAttachmentIndexForReaction(reaction, attachmentCount) {
+  if (attachmentCount === 1 && reaction.emoji.name === singleScreenshotReaction) {
+    return 0;
+  }
+
+  if (attachmentCount > 1) {
+    return numberReactions.findIndex((emoji) => reaction.emoji.name === emoji);
+  }
+
+  return -1;
 }
 
 async function countMemberUpvotes(reaction) {
@@ -233,7 +243,9 @@ async function addUpvoteReaction(message) {
   try {
     screenshotStore.track(message, imageAttachments);
 
-    for (const reactionEmoji of numberReactions.slice(0, imageAttachments.length)) {
+    const reactionEmojis = getReactionEmojisForAttachments(imageAttachments.length);
+
+    for (const reactionEmoji of reactionEmojis) {
       await message.react(reactionEmoji);
     }
 
@@ -243,7 +255,7 @@ async function addUpvoteReaction(message) {
       guildId: message.guildId,
       authorId: message.author.id,
       attachmentCount: imageAttachments.length,
-      emojis: numberReactions.slice(0, imageAttachments.length),
+      emojis: reactionEmojis,
     });
   } catch (error) {
     logger.error('screenshot_reactions_add_failed', {
@@ -256,8 +268,15 @@ async function addUpvoteReaction(message) {
   }
 }
 
-async function promoteScreenshot(message, attachmentIndex, upvoteCount) {
-  const imageAttachments = getImageAttachments(message);
+function getReactionEmojisForAttachments(attachmentCount) {
+  if (attachmentCount === 1) {
+    return [singleScreenshotReaction];
+  }
+
+  return numberReactions.slice(0, attachmentCount);
+}
+
+async function promoteScreenshot(message, attachmentIndex, upvoteCount, imageAttachments = getImageAttachments(message)) {
   const attachment = imageAttachments[attachmentIndex];
 
   if (!attachment) {
