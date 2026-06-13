@@ -8,4 +8,7 @@ services:
     environment:
       SCREENSHOT_DB_PATH: /app/data/screenshots.sqlite
     volumes:
-      - ./data:/app/data
+      - bot-data:/app/data
+
+volumes:
+  bot-data:

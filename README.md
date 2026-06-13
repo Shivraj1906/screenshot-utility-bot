@@ -70,7 +70,7 @@ Stop the bot:
 docker compose down
 ```
 
-The compose file reads environment variables from `.env` and mounts `./data` into the container at `/app/data`, so the SQLite database survives container rebuilds and restarts.
+The compose file reads environment variables from `.env` and mounts a Docker-managed `bot-data` volume into the container at `/app/data`, so the SQLite database survives container rebuilds and restarts without host directory permission issues.
 
 To run without Compose:
 
@@ -80,8 +80,16 @@ docker run -d \
   --name discord-screenshot-hof-bot \
   --restart unless-stopped \
   --env-file .env \
-  -v "$(pwd)/data:/app/data" \
+  -e SCREENSHOT_DB_PATH=/app/data/screenshots.sqlite \
+  -v screenshot-bot-data:/app/data \
   discord-screenshot-hof-bot
+```
+
+If you deliberately use a host bind mount like `./data:/app/data`, make sure the container user can write to it:
+
+```bash
+mkdir -p data
+sudo chown -R 1000:1000 data
 ```
 
 ## Recommended Discord Channel Permissions
