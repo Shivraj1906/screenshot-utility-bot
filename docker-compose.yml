@@ -1,0 +1,11 @@
+services:
+  discord-bot:
+    build: .
+    container_name: discord-screenshot-hof-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SCREENSHOT_DB_PATH: /app/data/screenshots.sqlite
+    volumes:
+      - ./data:/app/data

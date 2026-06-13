@@ -50,6 +50,40 @@ It also deletes non-bot messages posted in the hall-of-fame channel. You should 
    npm start
    ```
 
+## Docker
+
+Build and run with Docker Compose:
+
+```bash
+docker compose up -d --build
+```
+
+View logs:
+
+```bash
+docker compose logs -f
+```
+
+Stop the bot:
+
+```bash
+docker compose down
+```
+
+The compose file reads environment variables from `.env` and mounts `./data` into the container at `/app/data`, so the SQLite database survives container rebuilds and restarts.
+
+To run without Compose:
+
+```bash
+docker build -t discord-screenshot-hof-bot .
+docker run -d \
+  --name discord-screenshot-hof-bot \
+  --restart unless-stopped \
+  --env-file .env \
+  -v "$(pwd)/data:/app/data" \
+  discord-screenshot-hof-bot
+```
+
 ## Recommended Discord Channel Permissions
 
 For `hall-of-fame`, deny `Send Messages` for regular members and allow it only for the bot. The bot still includes a cleanup guard, but channel permissions are the best way to prevent extra messages.
