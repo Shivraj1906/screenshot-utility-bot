@@ -1,6 +1,8 @@
 # Discord Screenshot Hall of Fame Bot
 
-This bot watches one screenshot channel. When someone posts images, the bot adds numbered voting reactions (`1️⃣`, `2️⃣`, `3️⃣`, and so on). Each reaction maps to one screenshot in that message. When a specific screenshot reaches the reaction threshold, the bot re-uploads only that screenshot to your `hall-of-fame` channel and records the promotion in SQLite so it will not be promoted twice.
+This bot watches one screenshot channel. When someone posts images, the bot adds numbered voting reactions (`1️⃣`, `2️⃣`, `3️⃣`, and so on). Each reaction maps to one screenshot in that message. When a specific screenshot reaches the reaction threshold, the bot re-uploads only that screenshot to your `hall-of-fame` channel, tags the original sender, and records the promotion in SQLite so it will not be promoted twice.
+
+If multiple screenshots are waiting for votes, the bot can send an `@here` reminder in the configured reminder channel. It sends at most one reminder per configured interval, and only when new unpromoted screenshots were posted since the last reminder.
 
 Logs are emitted as structured JSON with event names and context fields, which makes them easy to search in systemd, Docker, or a hosted log service.
 
@@ -19,9 +21,13 @@ It also deletes non-bot messages posted in the hall-of-fame channel. You should 
    - `DISCORD_TOKEN`: your bot token from the Discord Developer Portal.
    - `SCREENSHOT_CHANNEL_ID`: the channel where screenshots are posted.
    - `HALL_OF_FAME_CHANNEL_ID`: the channel where winning screenshots are reposted.
+   - `REMINDER_CHANNEL_ID`: the channel where `@here` reminder messages are sent.
    - `UPVOTE_THRESHOLD`: defaults to `5`.
    - `SCREENSHOT_DB_PATH`: defaults to `data/screenshots.sqlite`.
    - `LOG_LEVEL`: defaults to `info`. Supported values are `debug`, `info`, `warn`, and `error`.
+   - `REMINDERS_ENABLED`: defaults to `true`. Set to `false` to disable `@here` reminders.
+   - `REMINDER_INTERVAL_HOURS`: defaults to `24`.
+   - `REMINDER_CHECK_MINUTES`: defaults to `15`.
 
 3. In the Discord Developer Portal, enable these bot intents:
 
@@ -36,6 +42,7 @@ It also deletes non-bot messages posted in the hall-of-fame channel. You should 
    - Send Messages
    - Attach Files
    - Manage Messages
+   - Mention Everyone
 
 5. Run the bot:
 

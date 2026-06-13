@@ -13,13 +13,29 @@ const config = {
   token: mustGetEnv('DISCORD_TOKEN'),
   screenshotChannelId: mustGetEnv('SCREENSHOT_CHANNEL_ID'),
   hallOfFameChannelId: mustGetEnv('HALL_OF_FAME_CHANNEL_ID'),
+  reminderChannelId: process.env.REMINDER_CHANNEL_ID,
   upvoteThreshold: Number.parseInt(process.env.UPVOTE_THRESHOLD ?? '5', 10),
   screenshotDbPath: process.env.SCREENSHOT_DB_PATH ?? 'data/screenshots.sqlite',
   logLevel: process.env.LOG_LEVEL ?? 'info',
+  remindersEnabled: process.env.REMINDERS_ENABLED !== 'false',
+  reminderIntervalHours: Number.parseFloat(process.env.REMINDER_INTERVAL_HOURS ?? '24'),
+  reminderCheckMinutes: Number.parseFloat(process.env.REMINDER_CHECK_MINUTES ?? '15'),
 };
 
 if (!Number.isInteger(config.upvoteThreshold) || config.upvoteThreshold < 1) {
   throw new Error('UPVOTE_THRESHOLD must be a positive integer.');
+}
+
+if (!Number.isFinite(config.reminderIntervalHours) || config.reminderIntervalHours <= 0) {
+  throw new Error('REMINDER_INTERVAL_HOURS must be a positive number.');
+}
+
+if (!Number.isFinite(config.reminderCheckMinutes) || config.reminderCheckMinutes <= 0) {
+  throw new Error('REMINDER_CHECK_MINUTES must be a positive number.');
+}
+
+if (config.remindersEnabled && !config.reminderChannelId) {
+  throw new Error('REMINDER_CHANNEL_ID is required when reminders are enabled.');
 }
 
 const imageContentTypes = new Set([
@@ -37,6 +53,7 @@ const activePromotions = new Set();
 const logger = createLogger(config.logLevel);
 const screenshotStore = await createScreenshotStore(config.screenshotDbPath);
 let isShuttingDown = false;
+let reminderTimer;
 
 const client = new Client({
   intents: [
@@ -54,9 +71,14 @@ client.once('clientReady', () => {
     botId: client.user.id,
     screenshotChannelId: config.screenshotChannelId,
     hallOfFameChannelId: config.hallOfFameChannelId,
+    reminderChannelId: config.reminderChannelId,
     upvoteThreshold: config.upvoteThreshold,
     reactionMode: 'numbered',
+    remindersEnabled: config.remindersEnabled,
+    reminderIntervalHours: config.reminderIntervalHours,
   });
+
+  startReminderLoop();
 });
 
 client.on('messageCreate', async (message) => {
@@ -145,6 +167,10 @@ async function shutdown() {
   logger.info('bot_shutdown_started');
 
   try {
+    if (reminderTimer) {
+      clearInterval(reminderTimer);
+    }
+
     await client.destroy();
     screenshotStore.close();
     logger.info('bot_shutdown_finished');
@@ -281,9 +307,9 @@ async function promoteScreenshot(message, attachmentIndex, upvoteCount) {
     const authorName = message.member?.displayName ?? message.author.username;
 
     const hallOfFameMessage = await hallOfFameChannel.send({
-      content: `Hall of Fame screenshot #${attachmentIndex + 1} from ${authorName}\nOriginal: ${message.url}`,
+      content: `Hall of Fame screenshot #${attachmentIndex + 1} from <@${message.author.id}> (${authorName})\nOriginal: ${message.url}`,
       files: [file],
-      allowedMentions: { parse: [] },
+      allowedMentions: { users: [message.author.id] },
     });
 
     screenshotStore.markPromoted(message.id, attachment.id, hallOfFameMessage.id, upvoteCount);
@@ -300,6 +326,51 @@ async function promoteScreenshot(message, attachmentIndex, upvoteCount) {
     });
   } finally {
     activePromotions.delete(promotionKey);
+  }
+}
+
+function startReminderLoop() {
+  if (!config.remindersEnabled) {
+    logger.info('reminders_disabled');
+    return;
+  }
+
+  void sendReminderIfNeeded();
+  reminderTimer = setInterval(() => {
+    void sendReminderIfNeeded();
+  }, config.reminderCheckMinutes * 60 * 1000);
+}
+
+async function sendReminderIfNeeded() {
+  try {
+    const reminder = screenshotStore.getReminderCandidate(config.reminderIntervalHours);
+
+    if (!reminder.shouldSend) {
+      logger.debug('screenshot_reminder_skipped', reminder);
+      return;
+    }
+
+    const reminderChannel = await client.channels.fetch(config.reminderChannelId);
+
+    if (!reminderChannel?.isTextBased()) {
+      throw new Error('REMINDER_CHANNEL_ID must point to a text-based channel.');
+    }
+
+    const reminderMessage = await reminderChannel.send({
+      content: `@here ${reminder.pendingCount} screenshots are waiting for votes. React with the numbered emoji under each screenshot post to help pick the next hall-of-fame entries.`,
+      allowedMentions: { parse: ['everyone'] },
+    });
+
+    screenshotStore.markReminderSent();
+    logger.info('screenshot_reminder_sent', {
+      messageId: reminderMessage.id,
+      channelId: reminderMessage.channelId,
+      pendingCount: reminder.pendingCount,
+      newPendingCount: reminder.newPendingCount,
+      reminderIntervalHours: config.reminderIntervalHours,
+    });
+  } catch (error) {
+    logger.error('screenshot_reminder_failed', { error });
   }
 }
 
@@ -363,6 +434,11 @@ async function createScreenshotStore(dbPath) {
 
     CREATE INDEX IF NOT EXISTS idx_screenshot_attachments_message_index
       ON screenshot_attachments(message_id, attachment_index);
+
+    CREATE TABLE IF NOT EXISTS reminder_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      last_reminded_at TEXT
+    );
   `);
 
   const statements = {
@@ -411,6 +487,26 @@ async function createScreenshotStore(dbPath) {
       WHERE message_id = ?
         AND attachment_id = ?
     `),
+    getReminderCandidate: db.prepare(`
+      WITH state AS (
+        SELECT COALESCE(
+          (SELECT last_reminded_at FROM reminder_state WHERE id = 1),
+          '1970-01-01 00:00:00'
+        ) AS last_reminded_at
+      )
+      SELECT
+        COUNT(*) AS pending_count,
+        SUM(CASE WHEN screenshot_attachments.created_at > state.last_reminded_at THEN 1 ELSE 0 END) AS new_pending_count,
+        CAST(strftime('%s', 'now') - strftime('%s', state.last_reminded_at) AS INTEGER) AS seconds_since_last_reminder
+      FROM screenshot_attachments, state
+      WHERE promoted_at IS NULL
+    `),
+    markReminderSent: db.prepare(`
+      INSERT INTO reminder_state (id, last_reminded_at)
+      VALUES (1, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        last_reminded_at = excluded.last_reminded_at
+    `),
   };
 
   logger.info('screenshot_store_ready', { dbPath });
@@ -445,6 +541,25 @@ async function createScreenshotStore(dbPath) {
     },
     markPromoted(messageId, attachmentId, hallOfFameMessageId, upvoteCount) {
       statements.markPromoted.run(hallOfFameMessageId, upvoteCount, messageId, attachmentId);
+    },
+    getReminderCandidate(reminderIntervalHours) {
+      const row = statements.getReminderCandidate.get();
+      const pendingCount = row.pending_count ?? 0;
+      const newPendingCount = row.new_pending_count ?? 0;
+      const secondsSinceLastReminder = row.seconds_since_last_reminder ?? Number.POSITIVE_INFINITY;
+      const reminderIntervalSeconds = reminderIntervalHours * 60 * 60;
+
+      return {
+        pendingCount,
+        newPendingCount,
+        secondsSinceLastReminder,
+        shouldSend: pendingCount > 1
+          && newPendingCount > 0
+          && secondsSinceLastReminder >= reminderIntervalSeconds,
+      };
+    },
+    markReminderSent() {
+      statements.markReminderSent.run();
     },
     close() {
       db.close();
