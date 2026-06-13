@@ -1,0 +1,17 @@
+{
+  "name": "discord-screenshot-hof-bot",
+  "version": "1.0.0",
+  "description": "Discord bot that promotes highly upvoted game screenshots to a hall-of-fame channel.",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3",
+    "dotenv": "^16.5.0"
+  }
+}
