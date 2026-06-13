@@ -1,6 +1,8 @@
 # Discord Screenshot Hall of Fame Bot
 
-This bot watches one screenshot channel. When an image post reaches the configured reaction threshold, it re-uploads the image to your `hall-of-fame` channel and remembers that message so it will not be promoted twice.
+This bot watches one screenshot channel. When someone posts an image, the bot adds the configured voting reaction. When that post reaches the reaction threshold, it re-uploads the image to your `hall-of-fame` channel and records the promotion in SQLite so it will not be promoted twice.
+
+Logs are emitted as structured JSON with event names and context fields, which makes them easy to search in systemd, Docker, or a hosted log service.
 
 It also deletes non-bot messages posted in the hall-of-fame channel. You should still lock the channel permissions so normal members cannot send messages there.
 
@@ -12,26 +14,22 @@ It also deletes non-bot messages posted in the hall-of-fame channel. You should 
    npm install
    ```
 
-2. Copy the example config:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-3. Edit `.env`:
+2. Create or edit `.env`:
 
    - `DISCORD_TOKEN`: your bot token from the Discord Developer Portal.
    - `SCREENSHOT_CHANNEL_ID`: the channel where screenshots are posted.
    - `HALL_OF_FAME_CHANNEL_ID`: the channel where winning screenshots are reposted.
    - `UPVOTE_THRESHOLD`: defaults to `5`.
-   - `UPVOTE_EMOJI`: defaults to `👍`.
+   - `UPVOTE_EMOJI`: defaults to `⭐`.
+   - `SCREENSHOT_DB_PATH`: defaults to `data/screenshots.sqlite`.
+   - `LOG_LEVEL`: defaults to `info`. Supported values are `debug`, `info`, `warn`, and `error`.
 
-4. In the Discord Developer Portal, enable these bot intents:
+3. In the Discord Developer Portal, enable these bot intents:
 
    - Server Members Intent is not required.
    - Message Content Intent is required so the bot can inspect message attachments.
 
-5. Invite the bot with these permissions:
+4. Invite the bot with these permissions:
 
    - View Channels
    - Read Message History
@@ -40,7 +38,7 @@ It also deletes non-bot messages posted in the hall-of-fame channel. You should 
    - Attach Files
    - Manage Messages
 
-6. Run the bot:
+5. Run the bot:
 
    ```bash
    npm start
@@ -49,3 +47,7 @@ It also deletes non-bot messages posted in the hall-of-fame channel. You should 
 ## Recommended Discord Channel Permissions
 
 For `hall-of-fame`, deny `Send Messages` for regular members and allow it only for the bot. The bot still includes a cleanup guard, but channel permissions are the best way to prevent extra messages.
+
+## Data
+
+The bot creates a SQLite database at `data/screenshots.sqlite` by default. This file tracks screenshot message IDs, source URLs, promotion state, hall-of-fame message IDs, and vote counts. The `data/` directory is ignored by git.
